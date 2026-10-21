@@ -63,6 +63,27 @@
             color: #00f3ff;
             text-shadow: 0 0 10px rgba(0, 243, 255, 0.5);
         }
+
+        /* Combo Popup Text */
+        #combo-text {
+            position: absolute;
+            top: 75px;
+            left: 50%;
+            transform: translateX(-50%) scale(0);
+            font-size: 28px;
+            font-weight: 900;
+            color: #ff0055;
+            text-shadow: 0 0 15px #ff0055, 0 0 30px #ff0055;
+            pointer-events: none;
+            transition: transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275), opacity 0.3s;
+            opacity: 0;
+            z-index: 8;
+        }
+        #combo-text.show {
+            transform: translateX(-50%) scale(1.2);
+            opacity: 1;
+        }
+
         /* Puzzle Grid Board (8x8) */
         #board-wrapper {
             position: relative;
@@ -94,6 +115,7 @@
             background: rgba(0, 243, 255, 0.5) !important;
             box-shadow: inset 0 0 8px #00f3ff;
         }
+
         /* Dock for 3 spawnable blocks */
         #dock {
             width: 100%;
@@ -130,7 +152,7 @@
             box-shadow: 0 0 6px #ff0055;
         }
 
-        /* Drag Overlay Element */
+        /* Drag Avatar Element */
         #drag-avatar {
             position: fixed;
             top: 0;
@@ -204,6 +226,8 @@
         </div>
     </div>
 
+    <div id="combo-text">COMBO x2</div>
+
     <!-- 8x8 Board Wrapper -->
     <div id="board-wrapper">
         <div id="board"></div>
@@ -249,16 +273,17 @@ class SoundController {
         osc.connect(gain); gain.connect(this.ctx.destination);
         osc.start(); osc.stop(this.ctx.currentTime + 0.08);
     }
-    clear() {
+    clear(combo = 1) {
         if (!this.ctx) return;
         const osc = this.ctx.createOscillator();
         const gain = this.ctx.createGain();
-        osc.frequency.setValueAtTime(500, this.ctx.currentTime);
-        osc.frequency.setValueAtTime(850, this.ctx.currentTime + 0.08);
+        const baseFreq = 500 + combo * 100;
+        osc.frequency.setValueAtTime(baseFreq, this.ctx.currentTime);
+        osc.frequency.setValueAtTime(baseFreq + 350, this.ctx.currentTime + 0.08);
         gain.gain.setValueAtTime(0.2, this.ctx.currentTime);
-        gain.gain.linearRampToValueAtTime(0.01, this.ctx.currentTime + 0.2);
+        gain.gain.linearRampToValueAtTime(0.01, this.ctx.currentTime + 0.25);
         osc.connect(gain); gain.connect(this.ctx.destination);
-        osc.start(); osc.stop(this.ctx.currentTime + 0.2);
+        osc.start(); osc.stop(this.ctx.currentTime + 0.25);
     }
 }
 const audio = new SoundController();
@@ -266,6 +291,7 @@ const audio = new SoundController();
 const BOARD_SIZE = 8;
 let board = Array(BOARD_SIZE).fill(0).map(() => Array(BOARD_SIZE).fill(0));
 let score = 0;
+let comboCount = 0;
 let highScore = localStorage.getItem('block_puzzle_highscore') || 0;
 document.getElementById('highScoreDisplay').innerText = highScore;
 
@@ -287,7 +313,6 @@ const SHAPES = [
 const boardEl = document.getElementById('board');
 const cells = [];
 
-// Board DOM Generation
 for (let r = 0; r < BOARD_SIZE; r++) {
     cells[r] = [];
     for (let c = 0; c < BOARD_SIZE; c++) {
@@ -347,7 +372,6 @@ function renderDock() {
     }
 }
 
-// Fixed Drag & Touch Handler
 const dragAvatar = document.getElementById('drag-avatar');
 
 function setupEvents() {
@@ -386,7 +410,6 @@ function setupEvents() {
 
         tryPlaceBlock(clientX, clientY);
         
-        // Clean up
         activeSlotIndex = null;
         dragAvatar.style.display = 'none';
         clearHighlights();
@@ -420,9 +443,9 @@ function createDragAvatar(shape) {
 }
 
 function updateDragAvatar(x, y) {
-    // Offset upwards so finger doesn't block the view
+    // 60px 위로 배치하여 손가락에 시야가 안 가려지게 보정
     dragAvatar.style.left = `${x}px`;
-    dragAvatar.style.top = `${y - 40}px`;
+    dragAvatar.style.top = `${y - 60}px`;
 }
 
 function clearHighlights() {
@@ -435,10 +458,9 @@ function clearHighlights() {
 
 function getBoardTarget(x, y) {
     const boardRect = boardEl.getBoundingClientRect();
-    // Offset slightly above touch
-    const checkY = y - 40; 
+    const checkY = y - 60; // 손가락 오프셋과 일치
 
-    if (x < boardRect.left || x > boardRect.right || checkY < boardRect.top || checkY > boardRect.bottom) {
+    if (x < boardRect.left - 20 || x > boardRect.right + 20 || checkY < boardRect.top - 20 || checkY > boardRect.bottom + 20) {
         return null;
     }
 
@@ -448,10 +470,10 @@ function getBoardTarget(x, y) {
     const col = Math.floor((x - boardRect.left) / cellWidth);
     const row = Math.floor((checkY - boardRect.top) / cellHeight);
 
-    if (row >= 0 && row < BOARD_SIZE && col >= 0 && col < BOARD_SIZE) {
-        return { row, col };
-    }
-    return null;
+    const clampRow = Math.max(0, Math.min(BOARD_SIZE - 1, row));
+    const clampCol = Math.max(0, Math.min(BOARD_SIZE - 1, col));
+
+    return { row: clampRow, col: clampCol };
 }
 
 function highlightTarget(x, y) {
@@ -481,7 +503,6 @@ function tryPlaceBlock(x, y) {
     if (canPlace(shape, target.row, target.col)) {
         placeBlock(shape, target.row, target.col);
         currentBlocks[activeSlotIndex] = null;
-        audio.pop();
         renderDock();
 
         if (currentBlocks.every(b => b === null)) {
@@ -521,9 +542,32 @@ function placeBlock(shape, startR, startC) {
         }
     }
     score += placedCount * 10;
-    checkLines();
+    
+    const linesCleared = checkLines();
+    if (linesCleared > 0) {
+        comboCount++;
+        showComboEffect(comboCount);
+        audio.clear(comboCount);
+    } else {
+        comboCount = 0;
+        audio.pop();
+    }
+
     updateScore();
     renderBoard();
+}
+
+function showComboEffect(combo) {
+    const comboEl = document.getElementById('combo-text');
+    if (combo > 1) {
+        comboEl.innerText = `COMBO x${combo}!`;
+    } else {
+        comboEl.innerText = `LINE CLEAR!`;
+    }
+    comboEl.classList.add('show');
+    setTimeout(() => {
+        comboEl.classList.remove('show');
+    }, 800);
 }
 
 function checkLines() {
@@ -541,8 +585,9 @@ function checkLines() {
         if (full) colsToClear.push(c);
     }
 
-    if (rowsToClear.length > 0 || colsToClear.length > 0) {
-        audio.clear();
+    const totalLines = rowsToClear.length + colsToClear.length;
+
+    if (totalLines > 0) {
         rowsToClear.forEach(r => {
             for (let c = 0; c < BOARD_SIZE; c++) board[r][c] = 0;
         });
@@ -550,10 +595,10 @@ function checkLines() {
             for (let r = 0; r < BOARD_SIZE; r++) board[r][c] = 0;
         });
 
-        const clearedLines = rowsToClear.length + colsToClear.length;
-        score += clearedLines * 100 * clearedLines;
-        updateScore();
+        // 콤보 보너스 계산
+        score += totalLines * 100 * (comboCount + 1);
     }
+    return totalLines;
 }
 
 function updateScore() {
@@ -590,6 +635,7 @@ function gameOver() {
 function resetGame() {
     board = Array(BOARD_SIZE).fill(0).map(() => Array(BOARD_SIZE).fill(0));
     score = 0;
+    comboCount = 0;
     updateScore();
     renderBoard();
     generateNewBlocks();
