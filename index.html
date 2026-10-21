@@ -13,6 +13,7 @@
             -webkit-user-select: none;
             margin: 0;
             padding: 0;
+            touch-action: none;
         }
         body, html {
             width: 100%;
@@ -30,7 +31,7 @@
             width: 100%;
             max-width: 450px;
             height: 100%;
-            max-height: 800px;
+            max-height: 750px;
             background: #12131c;
             box-shadow: 0 0 30px rgba(0, 243, 255, 0.2);
             border-radius: 16px;
@@ -46,7 +47,7 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 10px 0;
+            padding: 5px 10px;
         }
         .score-box {
             display: flex;
@@ -57,19 +58,24 @@
             color: #888;
         }
         .score-val {
-            font-size: 24px;
+            font-size: 26px;
             font-weight: bold;
             color: #00f3ff;
             text-shadow: 0 0 10px rgba(0, 243, 255, 0.5);
         }
         /* Puzzle Grid Board (8x8) */
+        #board-wrapper {
+            position: relative;
+            width: 320px;
+            height: 320px;
+        }
         #board {
             display: grid;
             grid-template-columns: repeat(8, 1fr);
             grid-template-rows: repeat(8, 1fr);
             gap: 4px;
-            width: 340px;
-            height: 340px;
+            width: 100%;
+            height: 100%;
             background: #1a1c29;
             padding: 8px;
             border-radius: 12px;
@@ -78,19 +84,20 @@
         .cell {
             background: #252839;
             border-radius: 6px;
-            transition: background 0.15s;
+            transition: background 0.1s;
         }
         .cell.filled {
             background: #00f3ff;
             box-shadow: 0 0 8px #00f3ff;
         }
         .cell.highlight {
-            background: rgba(0, 243, 255, 0.4);
+            background: rgba(0, 243, 255, 0.5) !important;
+            box-shadow: inset 0 0 8px #00f3ff;
         }
         /* Dock for 3 spawnable blocks */
         #dock {
             width: 100%;
-            height: 150px;
+            height: 130px;
             display: flex;
             justify-content: space-around;
             align-items: center;
@@ -105,20 +112,39 @@
             justify-content: center;
             align-items: center;
             cursor: pointer;
+            touch-action: none;
         }
         .mini-grid {
             display: grid;
             gap: 2px;
+            pointer-events: none;
         }
         .mini-cell {
             width: 18px;
             height: 18px;
-            background: #252839;
+            background: transparent;
             border-radius: 3px;
         }
         .mini-cell.filled {
             background: #ff0055;
             box-shadow: 0 0 6px #ff0055;
+        }
+
+        /* Drag Overlay Element */
+        #drag-avatar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            pointer-events: none;
+            z-index: 999;
+            display: none;
+            transform: translate(-50%, -50%);
+        }
+        #drag-avatar .mini-cell {
+            width: 32px;
+            height: 32px;
+            margin: 2px;
+            border-radius: 6px;
         }
 
         /* Screen overlays */
@@ -135,13 +161,12 @@
             justify-content: center;
             align-items: center;
             z-index: 10;
-            transition: opacity 0.3s;
         }
         .hidden {
             display: none !important;
         }
         h1 {
-            font-size: 38px;
+            font-size: 36px;
             color: #00f3ff;
             text-shadow: 0 0 15px #00f3ff;
             margin-bottom: 10px;
@@ -162,10 +187,6 @@
             border-radius: 30px;
             cursor: pointer;
             box-shadow: 0 0 15px rgba(0, 243, 255, 0.4);
-            transition: transform 0.1s;
-        }
-        .btn:active {
-            transform: scale(0.95);
         }
     </style>
 </head>
@@ -183,8 +204,10 @@
         </div>
     </div>
 
-    <!-- 8x8 Board -->
-    <div id="board"></div>
+    <!-- 8x8 Board Wrapper -->
+    <div id="board-wrapper">
+        <div id="board"></div>
+    </div>
 
     <!-- Bottom Dock -->
     <div id="dock">
@@ -193,10 +216,13 @@
         <div class="dock-slot" id="slot2"></div>
     </div>
 
+    <!-- Drag Avatar Container -->
+    <div id="drag-avatar"></div>
+
     <!-- Start Screen -->
     <div id="startScreen" class="screen">
         <h1>NEON BLOCK<br>PUZZLE</h1>
-        <p class="subtitle">블록을 채워 가로·세로 줄을 터뜨리세요!</p>
+        <p class="subtitle">블록을 끌어 놓아 줄을 제거하세요!</p>
         <button class="btn" id="startBtn">게임 시작</button>
     </div>
 
@@ -209,7 +235,6 @@
 </div>
 
 <script>
-// --- Audio Controller ---
 class SoundController {
     constructor() { this.ctx = null; }
     init() { if (!this.ctx) this.ctx = new (window.AudioContext || window.webkitAudioContext)(); }
@@ -218,27 +243,26 @@ class SoundController {
         const osc = this.ctx.createOscillator();
         const gain = this.ctx.createGain();
         osc.frequency.setValueAtTime(400, this.ctx.currentTime);
-        osc.frequency.exponentialRampToValueAtTime(800, this.ctx.currentTime + 0.1);
+        osc.frequency.exponentialRampToValueAtTime(800, this.ctx.currentTime + 0.08);
         gain.gain.setValueAtTime(0.15, this.ctx.currentTime);
-        gain.gain.linearRampToValueAtTime(0.01, this.ctx.currentTime + 0.1);
+        gain.gain.linearRampToValueAtTime(0.01, this.ctx.currentTime + 0.08);
         osc.connect(gain); gain.connect(this.ctx.destination);
-        osc.start(); osc.stop(this.ctx.currentTime + 0.1);
+        osc.start(); osc.stop(this.ctx.currentTime + 0.08);
     }
     clear() {
         if (!this.ctx) return;
         const osc = this.ctx.createOscillator();
         const gain = this.ctx.createGain();
-        osc.frequency.setValueAtTime(600, this.ctx.currentTime);
-        osc.frequency.setValueAtTime(900, this.ctx.currentTime + 0.08);
+        osc.frequency.setValueAtTime(500, this.ctx.currentTime);
+        osc.frequency.setValueAtTime(850, this.ctx.currentTime + 0.08);
         gain.gain.setValueAtTime(0.2, this.ctx.currentTime);
-        gain.gain.linearRampToValueAtTime(0.01, this.ctx.currentTime + 0.25);
+        gain.gain.linearRampToValueAtTime(0.01, this.ctx.currentTime + 0.2);
         osc.connect(gain); gain.connect(this.ctx.destination);
-        osc.start(); osc.stop(this.ctx.currentTime + 0.25);
+        osc.start(); osc.stop(this.ctx.currentTime + 0.2);
     }
 }
 const audio = new SoundController();
 
-// --- Game Logic ---
 const BOARD_SIZE = 8;
 let board = Array(BOARD_SIZE).fill(0).map(() => Array(BOARD_SIZE).fill(0));
 let score = 0;
@@ -246,24 +270,24 @@ let highScore = localStorage.getItem('block_puzzle_highscore') || 0;
 document.getElementById('highScoreDisplay').innerText = highScore;
 
 let currentBlocks = [null, null, null];
+let activeSlotIndex = null;
 
-// Shape templates
 const SHAPES = [
-    [[1]], // 1x1
-    [[1, 1]], // 2x1
-    [[1], [1]], // 1x2
-    [[1, 1], [1, 1]], // 2x2 Square
-    [[1, 1, 1]], // 3x1
-    [[1], [1], [1]], // 1x3
-    [[1, 1], [1, 0]], // L-shape small
-    [[1, 1, 1], [0, 0, 1]], // L-shape
-    [[1, 1], [0, 1]] // Z-shape
+    [[1]], 
+    [[1, 1]], 
+    [[1], [1]], 
+    [[1, 1], [1, 1]], 
+    [[1, 1, 1]], 
+    [[1], [1], [1]], 
+    [[1, 1], [1, 0]], 
+    [[1, 1, 1], [0, 1, 0]], 
+    [[1, 1], [0, 1]]
 ];
 
 const boardEl = document.getElementById('board');
 const cells = [];
 
-// Initialize Board DOM
+// Board DOM Generation
 for (let r = 0; r < BOARD_SIZE; r++) {
     cells[r] = [];
     for (let c = 0; c < BOARD_SIZE; c++) {
@@ -279,11 +303,8 @@ for (let r = 0; r < BOARD_SIZE; r++) {
 function renderBoard() {
     for (let r = 0; r < BOARD_SIZE; r++) {
         for (let c = 0; c < BOARD_SIZE; c++) {
-            if (board[r][c] === 1) {
-                cells[r][c].classList.add('filled');
-            } else {
-                cells[r][c].classList.remove('filled');
-            }
+            if (board[r][c] === 1) cells[r][c].classList.add('filled');
+            else cells[r][c].classList.remove('filled');
         }
     }
 }
@@ -323,124 +344,146 @@ function renderDock() {
             }
         }
         slot.appendChild(miniGrid);
-
-        // Make draggable/clickable
-        slot.onmousedown = (e) => startDrag(i, e);
-        slot.ontouchstart = (e) => startDrag(i, e.touches[0]);
     }
 }
 
-// Drag & Drop / Tap Simulation Logic
-let draggingIndex = null;
-let dragElement = null;
+// Fixed Drag & Touch Handler
+const dragAvatar = document.getElementById('drag-avatar');
 
-function startDrag(index, e) {
-    audio.init();
-    if (!currentBlocks[index]) return;
-    draggingIndex = index;
+function setupEvents() {
+    for (let i = 0; i < 3; i++) {
+        const slot = document.getElementById(`slot${i}`);
+        
+        const startHandler = (e) => {
+            audio.init();
+            if (!currentBlocks[i]) return;
+            activeSlotIndex = i;
+            
+            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+            const clientY = e.touches ? e.touches[0].clientY : e.clientY;
 
-    // Create floating element following touch/mouse
-    dragElement = document.createElement('div');
-    dragElement.style.position = 'fixed';
-    dragElement.style.zIndex = 1000;
-    dragElement.style.pointerEvents = 'none';
-    dragElement.style.transform = 'translate(-50%, -100%) scale(1.2)';
-    
-    const shape = currentBlocks[index];
+            createDragAvatar(currentBlocks[i]);
+            updateDragAvatar(clientX, clientY);
+            highlightTarget(clientX, clientY);
+        };
+
+        slot.addEventListener('mousedown', startHandler);
+        slot.addEventListener('touchstart', startHandler, { passive: false });
+    }
+
+    const moveHandler = (e) => {
+        if (activeSlotIndex === null) return;
+        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+        updateDragAvatar(clientX, clientY);
+        highlightTarget(clientX, clientY);
+    };
+
+    const endHandler = (e) => {
+        if (activeSlotIndex === null) return;
+        const clientX = e.changedTouches ? e.changedTouches[0].clientX : e.clientX;
+        const clientY = e.changedTouches ? e.changedTouches[0].clientY : e.clientY;
+
+        tryPlaceBlock(clientX, clientY);
+        
+        // Clean up
+        activeSlotIndex = null;
+        dragAvatar.style.display = 'none';
+        clearHighlights();
+    };
+
+    window.addEventListener('mousemove', moveHandler);
+    window.addEventListener('touchmove', moveHandler, { passive: false });
+    window.addEventListener('mouseup', endHandler);
+    window.addEventListener('touchend', endHandler);
+}
+
+function createDragAvatar(shape) {
+    dragAvatar.innerHTML = '';
     const rows = shape.length;
     const cols = shape[0].length;
-    
-    const miniGrid = document.createElement('div');
-    miniGrid.className = 'mini-grid';
-    miniGrid.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+
+    const grid = document.createElement('div');
+    grid.className = 'mini-grid';
+    grid.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+
     for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
             const mc = document.createElement('div');
             mc.className = 'mini-cell';
             if (shape[r][c] === 1) mc.classList.add('filled');
-            miniGrid.appendChild(mc);
+            grid.appendChild(mc);
         }
     }
-    dragElement.appendChild(miniGrid);
-    document.body.appendChild(dragElement);
-
-    moveDrag(e.clientX, e.clientY);
-
-    window.addEventListener('mousemove', onMouseMove);
-    window.addEventListener('mouseup', onMouseUp);
-    window.addEventListener('touchmove', onTouchMove);
-    window.addEventListener('touchend', onTouchEnd);
+    dragAvatar.appendChild(grid);
+    dragAvatar.style.display = 'block';
 }
 
-function onMouseMove(e) { moveDrag(e.clientX, e.clientY); highlightTarget(e.clientX, e.clientY); }
-function onTouchMove(e) { moveDrag(e.touches[0].clientX, e.touches[0].clientY); highlightTarget(e.touches[0].clientX, e.touches[0].clientY); }
-
-function moveDrag(x, y) {
-    if (dragElement) {
-        dragElement.style.left = `${x}px`;
-        dragElement.style.top = `${y}px`;
-    }
+function updateDragAvatar(x, y) {
+    // Offset upwards so finger doesn't block the view
+    dragAvatar.style.left = `${x}px`;
+    dragAvatar.style.top = `${y - 40}px`;
 }
 
-function highlightTarget(x, y) {
-    // Clear highlights
+function clearHighlights() {
     for (let r = 0; r < BOARD_SIZE; r++) {
         for (let c = 0; c < BOARD_SIZE; c++) {
             cells[r][c].classList.remove('highlight');
         }
     }
+}
 
-    const targetCell = document.elementFromPoint(x, y)?.closest('.cell');
-    if (!targetCell) return;
+function getBoardTarget(x, y) {
+    const boardRect = boardEl.getBoundingClientRect();
+    // Offset slightly above touch
+    const checkY = y - 40; 
 
-    const startR = parseInt(targetCell.dataset.r);
-    const startC = parseInt(targetCell.dataset.c);
-    const shape = currentBlocks[draggingIndex];
+    if (x < boardRect.left || x > boardRect.right || checkY < boardRect.top || checkY > boardRect.bottom) {
+        return null;
+    }
 
-    if (canPlace(shape, startR, startC)) {
+    const cellWidth = boardRect.width / BOARD_SIZE;
+    const cellHeight = boardRect.height / BOARD_SIZE;
+
+    const col = Math.floor((x - boardRect.left) / cellWidth);
+    const row = Math.floor((checkY - boardRect.top) / cellHeight);
+
+    if (row >= 0 && row < BOARD_SIZE && col >= 0 && col < BOARD_SIZE) {
+        return { row, col };
+    }
+    return null;
+}
+
+function highlightTarget(x, y) {
+    clearHighlights();
+    if (activeSlotIndex === null) return;
+
+    const target = getBoardTarget(x, y);
+    if (!target) return;
+
+    const shape = currentBlocks[activeSlotIndex];
+    if (canPlace(shape, target.row, target.col)) {
         for (let r = 0; r < shape.length; r++) {
             for (let c = 0; c < shape[0].length; c++) {
                 if (shape[r][c] === 1) {
-                    cells[startR + r][startC + c].classList.add('highlight');
+                    cells[target.row + r][target.col + c].classList.add('highlight');
                 }
             }
         }
     }
 }
 
-function onMouseUp(e) { finishDrag(e.clientX, e.clientY); cleanupDrag(); }
-function onTouchEnd(e) { finishDrag(e.changedTouches[0].clientX, e.changedTouches[0].clientY); cleanupDrag(); }
+function tryPlaceBlock(x, y) {
+    const target = getBoardTarget(x, y);
+    if (!target) return;
 
-function cleanupDrag() {
-    if (dragElement) dragElement.remove();
-    dragElement = null;
-    draggingIndex = null;
-    for (let r = 0; r < BOARD_SIZE; r++) {
-        for (let c = 0; c < BOARD_SIZE; c++) {
-            cells[r][c].classList.remove('highlight');
-        }
-    }
-    window.removeEventListener('mousemove', onMouseMove);
-    window.removeEventListener('mouseup', onMouseUp);
-    window.removeEventListener('touchmove', onTouchMove);
-    window.removeEventListener('touchend', onTouchEnd);
-}
-
-function finishDrag(x, y) {
-    const targetCell = document.elementFromPoint(x, y)?.closest('.cell');
-    if (!targetCell) return;
-
-    const startR = parseInt(targetCell.dataset.r);
-    const startC = parseInt(targetCell.dataset.c);
-    const shape = currentBlocks[draggingIndex];
-
-    if (canPlace(shape, startR, startC)) {
-        placeBlock(shape, startR, startC);
-        currentBlocks[draggingIndex] = null;
+    const shape = currentBlocks[activeSlotIndex];
+    if (canPlace(shape, target.row, target.col)) {
+        placeBlock(shape, target.row, target.col);
+        currentBlocks[activeSlotIndex] = null;
         audio.pop();
         renderDock();
 
-        // Check if all 3 blocks used, generate new ones
         if (currentBlocks.every(b => b === null)) {
             generateNewBlocks();
         } else {
@@ -487,11 +530,9 @@ function checkLines() {
     let rowsToClear = [];
     let colsToClear = [];
 
-    // Check rows
     for (let r = 0; r < BOARD_SIZE; r++) {
         if (board[r].every(cell => cell === 1)) rowsToClear.push(r);
     }
-    // Check cols
     for (let c = 0; c < BOARD_SIZE; c++) {
         let full = true;
         for (let r = 0; r < BOARD_SIZE; r++) {
@@ -510,7 +551,7 @@ function checkLines() {
         });
 
         const clearedLines = rowsToClear.length + colsToClear.length;
-        score += clearedLines * 100 * clearedLines; // Bonus for multi-lines
+        score += clearedLines * 100 * clearedLines;
         updateScore();
     }
 }
@@ -525,7 +566,6 @@ function updateScore() {
 }
 
 function checkGameOver() {
-    // Check if any remaining block can be placed anywhere on the board
     let possible = false;
     for (let i = 0; i < 3; i++) {
         if (currentBlocks[i] === null) continue;
@@ -555,7 +595,8 @@ function resetGame() {
     generateNewBlocks();
 }
 
-// UI Handlers
+setupEvents();
+
 document.getElementById('startBtn').addEventListener('click', () => {
     audio.init();
     resetGame();
